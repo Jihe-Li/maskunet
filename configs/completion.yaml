@@ -1,0 +1,58 @@
+# train or eval
+run: eval
+
+# device
+gpu: 0
+
+# train
+train: 
+  batch_size: 256
+  max_epoch: 200
+  num_iter: 8
+  log_per_iter: 50
+  ckpt_num: 20
+
+# test
+test:
+  batch_size: 1024  # 原数据是16
+  test_every_epoch: 20
+  shuffle: False
+  num_iter: 8
+  
+#optimizer
+optimizer:
+  weight_decay: 0.01
+  lr: 0.001
+
+# scheduler
+scheduler:
+  decay_step: 1
+  lr_decay: 0.99
+
+#dataset
+dataset: 
+  root_dir: data
+  data_process_dir: data/data_processing
+  white_id: 1
+  black_id: 0
+  mask_id: -1
+  size: 1024
+  height: 28  # 图像的高度
+  width: 28  # 图像的宽度
+  ratio: 0.5
+  take_train: 5000
+  take_test: 10000
+
+# model
+model:
+  n_channels: 1
+  n_classes: 2
+
+# log 
+logdir: logs
+test_every_epoch: 20
+log_per_iter: 50
+ckpt_num: 20
+out_data_dir: out_data
+ckpt: 
+ 

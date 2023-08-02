@@ -1,0 +1,8 @@
+__pycache__
+/data
+/logs
+/temp
+/out_data
+/out_data_epoch200
+/test.py
+/test1.py
