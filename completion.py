@@ -7,9 +7,10 @@ from configs import CONFIGS
 from tqdm import tqdm
 from dataset import CompletionDataset
 from torch.utils.data import DataLoader
-from utils import schedule, print_message
+from utils import schedule, print_info
 from utils import save_images
 from torchvision import transforms
+from torchvision import datasets, transforms
 
 
 class CompletionSolver():
@@ -30,7 +31,9 @@ class CompletionSolver():
         return UNet(self.FLAGS.model.n_channels, self.FLAGS.model.n_classes)
     
     def get_dataset(self, train_test):
-        return CompletionDataset(self.FLAGS.dataset.data_process_dir, train_test)
+        flags = flags = CONFIGS.dataset
+        mnist_dataset = datasets.MNIST(flags.root_dir, train= train_test == 'train', download=True, transform=transforms.ToTensor())
+        return mnist_dataset
     
     def get_dataloader(self, train_test):
         dataset = self.get_dataset(train_test)
@@ -122,11 +125,15 @@ class CompletionSolver():
         else:
             model_dict = trained_dict
         self.model.load_state_dict(model_dict)
+        if self.FLAGS.run == 'train':
+            print(f'Start from epoch {self.start_epoch}')
+        else:
+            print(f'Loading checkpoint at epoch {self.start_epoch-1}')
 
-    def compute_loss(self, logits, target):
+    def compute_loss(self, logits, target, mask):
         logits = logits.reshape(-1, logits.shape[-1])  # size:[]
         target = target.reshape(-1)  # size: batch_size
-        loss = torch.nn.functional.cross_entropy(logits, target)
+        loss = torch.nn.functional.cross_entropy(logits[mask], target[mask])
         return loss
     
     def compute_batch_acc(self, final_indices, target):
@@ -137,24 +144,6 @@ class CompletionSolver():
         correct = final_indices.eq(target).sum().item()
         return correct / (batch_size * self.FLAGS.dataset.height * self.FLAGS.dataset.width)
 
-    def train_epoch_(self, epoch):
-        self.model.train()
-        total_loss = 0
-        total_batch_acc = 0
-        loop_train = tqdm(enumerate(self.test_loader), total=len(self.test_loader), ncols=80)
-        loop_train.set_description(f'Epoch [{epoch+1}/{self.FLAGS.train.max_epoch}]')
-        for _, data in loop_train:
-            self.optimizer.zero_grad()
-            # 训练
-            data['x'], data['y'] = data['x'].cuda(self.FLAGS.gpu), data['y'].cuda(self.FLAGS.gpu)
-            out = self.model(data['x'])
-            loss = self.compute_loss(out, data['y'])
-            loss.backward()
-            self.optimizer.step()
-            total_loss += loss
-            total_batch_acc += self.compute_batch_acc(out.max(-1)[1], data['y'])
-        return total_loss / len(self.test_loader), total_batch_acc / (len(self.test_loader))
-
     def train_epoch(self, epoch):
         self.model.train()
         total_loss = 0
@@ -163,53 +152,55 @@ class CompletionSolver():
         loop_train.set_description(f'Epoch [{epoch}/{self.FLAGS.train.max_epoch}]')
         for _, data in loop_train:
             self.optimizer.zero_grad()
-            # 随机mask部分像素
-            img = data['x']  # size:[batch_size, 1, height, width] 
-            # 从均匀分布中采样一个比例数
-            ratio = torch.distributions.uniform.Uniform(torch.tensor([0.0]), torch.tensor([1.0])).sample()
-            choice = torch.randint(high=min(self.FLAGS.dataset.height, self.FLAGS.dataset.width), 
-                size=(2, int(ratio * self.FLAGS.dataset.height * self.FLAGS.dataset.width)))
-            choice = (choice[0], choice[1])
-            img_new = []
-            for i in range(img.shape[0]):
-                img[i][0][choice] = self.FLAGS.dataset.mask_id  # 对于单张图像进行mask
-                img_new.append(img[i])
-            data['x'] = torch.stack(img_new)  # size:[batch_size, 1, height, width]
+            img = data[0].cuda(self.FLAGS.gpu)
+            b, c, h, w = img.shape
+            img = img.reshape(-1)
+            img = img.round()
+            label = img.type(torch.int64)
+            # 采样一个比例随机进行 mask
+            ratio = torch.rand(1)
+            mask = torch.randperm(b * h *w, device=img.device)
+            mask = mask[: int(ratio * b * h * w)]
+            img[mask] = -1
+            img = img.reshape(b, c, h, w)
             # 训练
-            data['x'], data['y'] = data['x'].cuda(self.FLAGS.gpu), data['y'].cuda(self.FLAGS.gpu)
-            out = self.model(data['x'])
-            loss = self.compute_loss(out, data['y'])
+            out = self.model(img)
+            loss = self.compute_loss(out, label, mask)
             loss.backward()
             self.optimizer.step()
             total_loss += loss
-            total_batch_acc += self.compute_batch_acc(out.max(-1)[1], data['y'])
+            total_batch_acc += self.compute_batch_acc(out.max(-1)[1], label)
         return total_loss / len(self.train_loader), total_batch_acc / (len(self.train_loader))
 
-    def test_epoch(self, epoch):
+    def test_epoch(self):
         self.model.eval()
-        total_loss = [0 for _ in range(self.FLAGS.test.num_iter)]
-        total_batch_acc = [0 for _ in range(self.FLAGS.test.num_iter)]
+        total_loss = 0
+        total_batch_acc = 0
         loop_test = tqdm(enumerate(self.test_loader), total=len(self.test_loader), ncols=80)
-        loop_test.set_description(f'Epoch [{epoch}/{self.FLAGS.train.max_epoch}]')
-        with torch.no_grad():
-            for _, data in loop_test:
-                data['x'], data['y'] = data['x'].cuda(self.FLAGS.gpu), data['y'].cuda(self.FLAGS.gpu)
-                 # 开始时所有mask_tokens的数量, cur_ids为输入的图像数据
-                cur_ids_seq = data['x'].reshape(data['x'].shape[0], -1)
-                unknown_number_in_the_beginning = torch.sum(cur_ids_seq == self.FLAGS.dataset.mask_id, axis=-1)
-                cur_ids = data['x']
-                for step in range(self.FLAGS.test.num_iter):
-                    cur_ids, final_ids, logits = self.test_step(cur_ids, step, unknown_number_in_the_beginning,
-                                              choice_temperature=1.0, mask_scheduling_method="cosine")
-                    
-                    # 在salf.test_step函数内部计算整正确率和loss
-                    cur_ids = cur_ids.reshape(cur_ids.shape[0], 1, 
-                                              self.FLAGS.dataset.height, self.FLAGS.dataset.width)
-                    total_loss[step] += (self.compute_loss(logits, data['y']) / len(self.test_loader)).item()
-                    total_batch_acc[step] += self.compute_batch_acc(final_ids, data['y']) / len(self.test_loader)
-            return total_loss, total_batch_acc
+        loop_test.set_description(f'Testing......')
+        for _, data in loop_test:
+            self.optimizer.zero_grad()
+            img = data[0].cuda(self.FLAGS.gpu)
+            b, c, h, w = img.shape
+            img = img.reshape(-1)
+            img = img.round()
+            label = img.type(torch.int64)
+            # 采样一个比例随机进行 mask
+            ratio = torch.rand(1)
+            mask = torch.randperm(b * h *w, device=img.device)
+            mask = mask[: int(ratio * b * h * w)]
+            img[mask] = -1
+            img = img.reshape(b, c, h, w)
+            # 训练
+            out = self.model(img)
+            loss = self.compute_loss(out, label, mask)
+            loss.backward()
+            self.optimizer.step()
+            total_loss += loss
+            total_batch_acc += self.compute_batch_acc(out.max(-1)[1], label)
+        return total_loss / len(self.test_loader), total_batch_acc / (len(self.test_loader))
     
-    def test_step(self, cur_ids, step, unknown_number_in_the_beginning, choice_temperature=1.0, 
+    def eval_step(self, cur_ids, step, unknown_number_in_the_beginning, choice_temperature=1.0, 
            mask_scheduling_method="cosine"):
         '''
         cur_ids: [batch_size, channels, height, width] input masked image,
@@ -233,7 +224,7 @@ class CompletionSolver():
         # 更新masked token, 原来不被 mask 的位置，还是选择原来的token_ids，原来被mask的位置选择新的index
         final_ids = torch.where(unknown_map, sampled_ids, cur_ids)  # sampled_ids 就是最该迭代预测出的图像
         # Ignores the tokens given in the input by overwriting their confidence.
-        selected_probs = torch.where(unknown_map, selected_probs, 1.0e10)  # selected_probs是预测出的最终概率
+        selected_probs = torch.where(unknown_map, selected_probs, 1.0e6)  # selected_probs是预测出的最终概率
         # Defines the mask ratio for the next round. The number to mask out is
         # determined by mask_ratio * unknown_number_in_the_beginning.
         ratio = 1. * (step + 1) / self.FLAGS.test.num_iter
@@ -260,9 +251,9 @@ class CompletionSolver():
         return: 下次迭代要mask的蒙版
         """
         confidence = probs
-        
+
         # 下面的指令为增加随机性
-        # confidence = torch.log(confidence) + temperature * torch.distributions.gumbel.Gumbel(torch.tensor([1.0]), torch.tensor([2.0])).sample(confidence.shape).squeeze(-1).cuda(self.FLAGS.gpu)
+        confidence = torch.log(confidence) + temperature * torch.distributions.gumbel.Gumbel(torch.tensor([1.0]), torch.tensor([2.0])).sample(confidence.shape).squeeze(-1).cuda(self.FLAGS.gpu)
         sorted_confidence, _ = torch.sort(confidence, dim=-1)
         cut_off = torch.gather(sorted_confidence, dim=-1, index=mask_len.type(torch.int64))
         masking = (confidence < cut_off)
@@ -275,6 +266,7 @@ class CompletionSolver():
         '''
         batch_size = prob.shape[0]
         prob = prob.reshape(-1, prob.shape[-1])
+        prob = torch.nn.functional.softmax(prob, dim=-1)
         indices = torch.multinomial(prob, 1)
         prob = torch.gather(prob, dim=1, index=indices)
         return indices.reshape(batch_size, -1), prob.reshape(batch_size, -1)
@@ -297,16 +289,9 @@ class CompletionSolver():
             self.scheduler.step()
 
             # 测试
-            test_loss, test_acc = self.test_epoch(epoch)
-            scalar_dict_loss = {}
-            scalar_dict_acc = {}
-            for i in range(self.FLAGS.test.num_iter):
-                scalar_dict_loss[f'loss_{i}'] = test_loss[i]
-                scalar_dict_acc[f'acc_{i}'] = test_acc[i]
-            self.summary_writer.add_scalars(main_tag='test_loss', 
-                            tag_scalar_dict=scalar_dict_loss, global_step=epoch)
-            self.summary_writer.add_scalars(main_tag='test_acc', 
-                            tag_scalar_dict=scalar_dict_acc, global_step=epoch)
+            test_loss, test_acc = self.test_epoch()
+            self.summary_writer.add_scalar('test_loss', test_loss, global_step=epoch)
+            self.summary_writer.add_scalar('test_acc', test_acc, global_step=epoch)
             duration = time.time() - start
             info = {
                 'train_loss': train_loss,
@@ -317,12 +302,49 @@ class CompletionSolver():
                 'epochs': self.FLAGS.train.max_epoch,
                 't_duration': duration
             }
-            print_message(info)
+            print_info(info)
 
-            if epoch % 10 == 0:
+            if epoch % 100 == 0:
                 self.save_checkpoint(epoch)
 
     def eval(self):
+        self.config_model()
+        self.config_dataloader('test')
+        self.config_log()
+        self.load_checkpoint()
+        
+        self.model.eval()
+        loop_test = tqdm(range(10), ncols=80)
+        loop_test.set_description('Evaluating......')
+        with torch.no_grad():
+            file_order = 0  # 输出的文件序号，用于给文明命名
+            for i in loop_test:
+                img = -torch.ones((self.FLAGS.test.batch_size, 1, 28, 28)).cuda(self.FLAGS.gpu)
+                 # 开始时所有mask_tokens的数量, cur_ids为输入的图像数据
+                cur_ids_seq = img.reshape(img.shape[0], -1)
+                unknown_number_in_the_beginning = torch.sum(cur_ids_seq == self.FLAGS.dataset.mask_id, axis=-1)
+                cur_ids = img
+                for step in range(self.FLAGS.test.num_iter):
+                    cur_ids, final_ids, logits = self.eval_step(cur_ids, step, unknown_number_in_the_beginning,
+                                              choice_temperature=1.0, mask_scheduling_method="cosine")
+                    
+                    cur_ids = cur_ids.reshape(cur_ids.shape[0], 1, 
+                                              self.FLAGS.dataset.height, self.FLAGS.dataset.width)
+
+                # save_images(final_ids, file_order)  
+                batch_size = final_ids.shape[0]
+                final_ids = final_ids.reshape(batch_size, self.FLAGS.dataset.height, self.FLAGS.dataset.width)
+                toPIL = transforms.ToPILImage()
+                if not os.path.exists(self.FLAGS.out_data_dir):
+                    os.makedirs(self.FLAGS.out_data_dir)
+                for k in range(batch_size):
+                    image = final_ids[k]
+                    pic = toPIL(image)
+                    filename = os.path.join(self.FLAGS.out_data_dir, '%05d'%file_order + '.jpg')
+                    file_order += 1
+                    pic.save(filename)   
+
+    def eval_old(self):
         self.config_model()
         self.config_dataloader('test')
         self.config_log()
@@ -342,10 +364,10 @@ class CompletionSolver():
                 unknown_number_in_the_beginning = torch.sum(cur_ids_seq == self.FLAGS.dataset.mask_id, axis=-1)
                 cur_ids = data['x']
                 for step in range(self.FLAGS.test.num_iter):
-                    cur_ids, final_ids, logits = self.test_step(cur_ids, step, unknown_number_in_the_beginning,
+                    cur_ids, final_ids, logits = self.eval_step(cur_ids, step, unknown_number_in_the_beginning,
                                               choice_temperature=1.0, mask_scheduling_method="cosine")
                     
-                    # 在salf.test_step函数内部计算整正确率和loss
+                    # 在self.test_step函数内部计算整正确率和loss
                     cur_ids = cur_ids.reshape(cur_ids.shape[0], 1, 
                                               self.FLAGS.dataset.height, self.FLAGS.dataset.width)
                     total_loss[step] += (self.compute_loss(logits, data['y']) / len(self.test_loader)).item()

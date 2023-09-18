@@ -2,22 +2,22 @@
 run: eval
 
 # device
-gpu: 0
+gpu: 9
 
 # train
 train: 
   batch_size: 256
-  max_epoch: 200
-  num_iter: 8
+  max_epoch: 1000
+  num_iter: 50
   log_per_iter: 50
   ckpt_num: 20
 
 # test
 test:
-  batch_size: 1024  # 原数据是16
+  batch_size: 256  # 原数据是16
   test_every_epoch: 20
   shuffle: False
-  num_iter: 8
+  num_iter: 20
   
 #optimizer
 optimizer:
@@ -40,8 +40,8 @@ dataset:
   height: 28  # 图像的高度
   width: 28  # 图像的宽度
   ratio: 0.5
-  take_train: 5000
-  take_test: 10000
+  take_train: -1
+  take_test: -1
 
 # model
 model:

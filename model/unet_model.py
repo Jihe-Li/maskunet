@@ -34,12 +34,9 @@ class UNet(nn.Module):
         x = self.up3(x, x2)
         x = self.up4(x, x1)
         logits = self.outc(x)
-        # 变换logits的形状并取 softmax
-        logits = logits.reshape(logits.shape[0], logits.shape[1], -1)
-        logits_0 = logits[:, 0, :].unsqueeze(-1)
-        logits_1 = logits[:, 1, :].unsqueeze(-1)
-        logits = torch.cat([logits_0, logits_1], dim=-1)
-        logits = torch.softmax(logits, dim=-1)  # size: [batch_size, height*width, 2]
+        # 变换logits的形状
+        logits = logits.permute(0, 2, 3, 1).contiguous()
+        logits = logits.reshape(logits.shape[0], -1, logits.shape[-1])
         return logits
 
     def use_checkpointing(self):
