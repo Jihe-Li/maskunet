@@ -1,5 +1,5 @@
 # train or eval
-run: eval
+run: train
 
 # device
 gpu: 9
@@ -46,7 +46,7 @@ dataset:
 # model
 model:
   n_channels: 1
-  n_classes: 2
+  n_classes: 1
 
 # log 
 logdir: logs

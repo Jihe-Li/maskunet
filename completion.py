@@ -131,18 +131,20 @@ class CompletionSolver():
             print(f'Loading checkpoint at epoch {self.start_epoch-1}')
 
     def compute_loss(self, logits, target, mask):
-        logits = logits.reshape(-1, logits.shape[-1])  # size:[]
+        logits = logits.reshape(-1)  # size:[]
         target = target.reshape(-1)  # size: batch_size
-        loss = torch.nn.functional.cross_entropy(logits[mask], target[mask])
+        # loss = torch.nn.functional.cross_entropy(logits[mask], target[mask])
+        loss = torch.nn.functional.binary_cross_entropy(logits[mask], target[mask].float())
         return loss
     
     def compute_batch_acc(self, final_indices, target):
-        batch_size = final_indices.shape[0]
         final_indices = final_indices.reshape(-1)
         target = target.reshape(-1)
 
-        correct = final_indices.eq(target).sum().item()
-        return correct / (batch_size * self.FLAGS.dataset.height * self.FLAGS.dataset.width)
+        final_indices = final_indices.round()
+        correct = final_indices.eq(target).float().mean()
+
+        return correct
 
     def train_epoch(self, epoch):
         self.model.train()
@@ -156,7 +158,7 @@ class CompletionSolver():
             b, c, h, w = img.shape
             img = img.reshape(-1)
             img = img.round()
-            label = img.type(torch.int64)
+            label = img.clone()  #.type(torch.int64)
             # 采样一个比例随机进行 mask
             ratio = torch.rand(1)
             mask = torch.randperm(b * h *w, device=img.device)
@@ -169,7 +171,9 @@ class CompletionSolver():
             loss.backward()
             self.optimizer.step()
             total_loss += loss
-            total_batch_acc += self.compute_batch_acc(out.max(-1)[1], label)
+            out = out.reshape(-1)
+            out = out.round()
+            total_batch_acc += self.compute_batch_acc(out, label)
         return total_loss / len(self.train_loader), total_batch_acc / (len(self.train_loader))
 
     def test_epoch(self):
@@ -184,7 +188,7 @@ class CompletionSolver():
             b, c, h, w = img.shape
             img = img.reshape(-1)
             img = img.round()
-            label = img.type(torch.int64)
+            label = img.clone()
             # 采样一个比例随机进行 mask
             ratio = torch.rand(1)
             mask = torch.randperm(b * h *w, device=img.device)
@@ -197,7 +201,9 @@ class CompletionSolver():
             loss.backward()
             self.optimizer.step()
             total_loss += loss
-            total_batch_acc += self.compute_batch_acc(out.max(-1)[1], label)
+            out = out.reshape(-1)
+            out = out.round()
+            total_batch_acc += self.compute_batch_acc(out, label)
         return total_loss / len(self.test_loader), total_batch_acc / (len(self.test_loader))
     
     def eval_step(self, cur_ids, step, unknown_number_in_the_beginning, choice_temperature=1.0, 

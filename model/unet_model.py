@@ -36,7 +36,8 @@ class UNet(nn.Module):
         logits = self.outc(x)
         # 变换logits的形状
         logits = logits.permute(0, 2, 3, 1).contiguous()
-        logits = logits.reshape(logits.shape[0], -1, logits.shape[-1])
+        logits = logits.reshape(logits.shape[0], -1)  # , logits.shape[-1])
+        logits = torch.nn.functional.sigmoid(logits)
         return logits
 
     def use_checkpointing(self):
