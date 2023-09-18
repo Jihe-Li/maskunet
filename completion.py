@@ -268,6 +268,18 @@ class CompletionSolver():
     def sample_logit(self, prob):
         '''
         prob: softmax后的概率, 目前仅是对于单个数据的
+        return: 采样出的indices和对应的概率
+        '''
+        batch_size = prob.shape[0]
+        prob = prob.reshape(-1, 1)
+        prob = torch.concat([1-prob, prob], dim=1)
+        indices = torch.multinomial(prob, 1)
+        prob = torch.gather(prob, dim=1, index=indices)
+        return indices.reshape(batch_size, -1), prob.reshape(batch_size, -1)
+
+    def sample_logit_(self, prob):
+        '''
+        prob: softmax后的概率, 目前仅是对于单个数据的
         return: 采样出的indices [batch_size, h*w] 和 对应的概率 [batch_size, h*w]
         '''
         batch_size = prob.shape[0]

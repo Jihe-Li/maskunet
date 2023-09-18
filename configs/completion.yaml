@@ -1,5 +1,5 @@
 # train or eval
-run: train
+run: eval
 
 # device
 gpu: 9
