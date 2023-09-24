@@ -1,3 +1,10 @@
+# log 
+logdir: logs/0923
+test_every_epoch: 20
+log_per_iter: 50
+ckpt_num: 20
+ckpt: 
+
 # train or eval
 run: eval
 
@@ -11,7 +18,8 @@ train:
   num_iter: 50
   log_per_iter: 50
   ckpt_num: 20
-
+  shuffle: True
+  
 # test
 test:
   batch_size: 256  # 原数据是16
@@ -48,10 +56,3 @@ model:
   n_channels: 1
   n_classes: 1
 
-# log 
-logdir: logs/0923
-test_every_epoch: 20
-log_per_iter: 50
-ckpt_num: 20
-ckpt: 
- 

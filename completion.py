@@ -38,10 +38,10 @@ class CompletionSolver():
     def get_dataloader(self, train_test):
         dataset = self.get_dataset(train_test)
         if train_test == 'train':
-            batch_size = self.FLAGS.train.batch_size
+            flags = self.FLAGS.train
         elif train_test == 'test':
-            batch_size = self.FLAGS.test.batch_size
-        data_loader = DataLoader(dataset, batch_size=batch_size)
+            flags = self.FLAGS.test
+        data_loader = DataLoader(dataset, batch_size=flags.batch_size, shuffle=flags.shuffle)
         return data_loader
 
     def config_model(self):
