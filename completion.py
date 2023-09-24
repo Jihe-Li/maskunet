@@ -82,6 +82,11 @@ class CompletionSolver():
         if not os.path.exists(self.ckpt_dir):
             os.mkdir(self.ckpt_dir)
 
+        confidence_writer_dir = os.path.join(self.logdir, 'confidence')
+        if not os.path.join(confidence_writer_dir):
+            os.mkdir(confidence_writer_dir)
+        self.confidence_writer = SummaryWriter(confidence_writer_dir, flush_secs=20)
+
     def save_checkpoint(self, epoch):
         # clean up
         ckpts = sorted(os.listdir(self.ckpt_dir))
@@ -246,7 +251,11 @@ class CompletionSolver():
         masking = self.mask_by_noise(mask_len, selected_probs, choice_temperature * (1. - ratio))
         # Masks tokens with lower confidence. 最终得到这个最后的 indices，形状为[batch_size, w*h]
         sampled_ids = torch.where(masking, self.FLAGS.dataset.mask_id, final_ids)
-        return sampled_ids, final_ids, logits
+        check = torch.where(unknown_map, logits, sampled_ids)
+        self.visualize_in_2d(masking[0], step, name_prefix='masking')
+        self.visualize_in_2d(logits[0], step, name_prefix='logits')
+        self.visualize_in_2d(check[0], step, name_prefix='logits_updated')
+        return sampled_ids, final_ids, logits, selected_probs
 
     def mask_by_noise(self, mask_len, probs, temperature=1.0):
         """
@@ -267,7 +276,7 @@ class CompletionSolver():
 
     def sample_logit(self, prob):
         '''
-        prob: softmax后的概率, 目前仅是对于单个数据的
+        prob: sigmoid后的概率, 目前仅是对于单个数据的
         return: 采样出的indices和对应的概率
         '''
         batch_size = prob.shape[0]
@@ -343,22 +352,24 @@ class CompletionSolver():
                 unknown_number_in_the_beginning = torch.sum(cur_ids_seq == self.FLAGS.dataset.mask_id, axis=-1)
                 cur_ids = img
                 for step in range(self.FLAGS.test.num_iter):
-                    cur_ids, final_ids, logits = self.eval_step(cur_ids, step, unknown_number_in_the_beginning,
+                    cur_ids, final_ids, logits, confidence = self.eval_step(cur_ids, step, unknown_number_in_the_beginning,
                                               choice_temperature=1.0, mask_scheduling_method="cosine")
                     
                     cur_ids = cur_ids.reshape(cur_ids.shape[0], 1, 
                                               self.FLAGS.dataset.height, self.FLAGS.dataset.width)
 
+                    self.confidence_writer.add_histogram(tag='confidence_histogram', values=confidence.reshape(-1), global_step=step)
                 # save_images(final_ids, file_order)  
                 batch_size = final_ids.shape[0]
                 final_ids = final_ids.reshape(batch_size, self.FLAGS.dataset.height, self.FLAGS.dataset.width)
                 toPIL = transforms.ToPILImage()
-                if not os.path.exists(self.FLAGS.out_data_dir):
-                    os.makedirs(self.FLAGS.out_data_dir)
+                out_data_dir = os.path.join(self.logdir, 'out_data')
+                if not os.path.exists(out_data_dir):
+                    os.makedirs(out_data_dir)
                 for k in range(batch_size):
                     image = final_ids[k]
                     pic = toPIL(image)
-                    filename = os.path.join(self.FLAGS.out_data_dir, '%05d'%file_order + '.jpg')
+                    filename = os.path.join(out_data_dir, '%05d'%file_order + '.jpg')
                     file_order += 1
                     pic.save(filename)   
 
@@ -408,6 +419,14 @@ class CompletionSolver():
                 print('loss: ', total_loss[i], 'acc: ', total_batch_acc[i])
                 self.summary_writer.add_scalar(f'eval_loss', total_loss[i], i)
                 self.summary_writer.add_scalar(f'eval_acc', total_batch_acc[i], i)
+
+    def visualize_in_2d(self, array, step, name_prefix='confidence'):
+            '''
+            可视化logits. logits的形状为[h, w]
+            '''
+            array = array.reshape(1, 28, 28)
+            # 生成一个图像，并放入tensorboard
+            self.summary_writer.add_image(f'{name_prefix}_{step}', array, global_step=step)
 
     def run(self):
         eval('self.%s()' % self.FLAGS.run)

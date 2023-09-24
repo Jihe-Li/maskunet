@@ -2,7 +2,7 @@
 run: eval
 
 # device
-gpu: 9
+gpu: 0
 
 # train
 train: 
@@ -22,7 +22,7 @@ test:
 #optimizer
 optimizer:
   weight_decay: 0.01
-  lr: 0.001
+  lr: 0.00001
 
 # scheduler
 scheduler:
@@ -49,10 +49,9 @@ model:
   n_classes: 1
 
 # log 
-logdir: logs
+logdir: logs/0923
 test_every_epoch: 20
 log_per_iter: 50
 ckpt_num: 20
-out_data_dir: out_data
 ckpt: 
  

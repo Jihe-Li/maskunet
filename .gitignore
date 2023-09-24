@@ -1,11 +1,4 @@
 __pycache__
 /logs
-/temp
-/out_data
-/out_data_epoch200
 /test.py
 /test1.py
-/out_data500
-/logs_lod
-/out_data913_1000
-/logs_old
