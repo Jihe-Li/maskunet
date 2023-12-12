@@ -1,5 +1,5 @@
 # log 
-logdir: logs/0923
+logdir: logs/1115
 test_every_epoch: 20
 log_per_iter: 50
 ckpt_num: 20
@@ -25,7 +25,7 @@ test:
   batch_size: 256  # 原数据是16
   test_every_epoch: 20
   shuffle: False
-  num_iter: 20
+  num_iter: 40
   
 #optimizer
 optimizer:

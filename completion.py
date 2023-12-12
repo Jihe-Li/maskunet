@@ -255,6 +255,7 @@ class CompletionSolver():
         self.visualize_in_2d(masking[0], step, name_prefix='masking')
         self.visualize_in_2d(logits[0], step, name_prefix='logits')
         self.visualize_in_2d(check[0], step, name_prefix='logits_updated')
+        self.visualize_in_2d(selected_probs[0].clamp(0, 1), step, name_prefix='confidence')
         return sampled_ids, final_ids, logits, selected_probs
 
     def mask_by_noise(self, mask_len, probs, temperature=1.0):
@@ -358,7 +359,8 @@ class CompletionSolver():
                     cur_ids = cur_ids.reshape(cur_ids.shape[0], 1, 
                                               self.FLAGS.dataset.height, self.FLAGS.dataset.width)
 
-                    self.confidence_writer.add_histogram(tag='confidence_histogram', values=confidence.reshape(-1), global_step=step)
+                    self.confidence_writer.add_histogram(tag='logits_histogram', values=logits.reshape(-1).clamp(0, 1), global_step=step)
+                    self.confidence_writer.add_histogram(tag='confidence_histogram', values=confidence.reshape(-1).clamp(0, 1), global_step=step)
                 # save_images(final_ids, file_order)  
                 batch_size = final_ids.shape[0]
                 final_ids = final_ids.reshape(batch_size, self.FLAGS.dataset.height, self.FLAGS.dataset.width)
